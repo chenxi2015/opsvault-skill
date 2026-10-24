@@ -1,0 +1,3 @@
+interface:
+  display_name: "OpsVault"
+  short_description: "Manage middleware and clusters via the OpsVault CLI"
