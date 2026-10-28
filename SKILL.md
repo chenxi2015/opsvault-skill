@@ -127,6 +127,7 @@ Requires `configs/ansible.yaml` inventory (template: `configs/ansible.example.ya
 ```bash
 opsvault ansible ping    --group db_servers [-e test]
 opsvault ansible exec    --group db_servers --cmd "uptime"
+opsvault ansible exec    --group db_servers -f ./scripts/check.sh
 opsvault ansible doctor  --group db_servers
 opsvault ansible list
 opsvault ansible deploy    --service mysql --group db_servers
@@ -138,20 +139,22 @@ opsvault ansible push      --group db_servers --bin ./bin/opsvault-linux-amd64 -
 
 ### Ansible exec — remote shell safety
 
-`opsvault ansible exec --group <g> --cmd "<shell>"` fans a shell string out to every host in the group via ansible's `shell` module. OpsVault ships a built-in safety gate that classifies every command into **safe / mutating / dangerous** before anything is sent:
+`opsvault ansible exec --group <g> [--cmd "<shell>" | -f <script.sh>]` fans a shell command or a local script out to every host in the group via ansible's `shell` or `script` module (`--cmd` and `-f/--file` are mutually exclusive). OpsVault ships a built-in safety gate that inspects the command line or full script contents and classifies it into **safe / mutating / dangerous** before anything is sent:
 
 - **safe** (read-only) — runs immediately. No confirmation required by the tool.
 - **mutating** (service restart, file write, package install, redirect, ...) — interactive confirmation required unless `--yes` is passed.
 - **dangerous** (`rm -rf`, `mkfs`, `dd of=/dev/...`, `shutdown`, `reboot`, `iptables -F`, `useradd`/`userdel`/`passwd`, `crontab -e/-r`, `yum remove`/`update -y`, `curl ... | bash`, base64-obfuscated payloads, fork bombs, ...) — **refused by default**; requires `--allow-destructive` AND interactive confirmation. Even when the user asks, you must apply Golden rule #1 (二次确认铁律) on top.
 
-Every invocation — including blocked and dry-run attempts — is appended to the opsvault audit log with the full command, group, risk level, and matched reason.
+Every invocation — including blocked and dry-run attempts — is appended to the opsvault audit log with the full command/script path, group, risk level, and matched reason.
 
 **Useful flags:**
 
 ```bash
---dry-run              # print parsed command + risk level, do not ssh
+-c, --cmd <shell>      # shell command to execute (mutually exclusive with -f)
+-f, --file <path>      # path to local shell script to execute (via ansible script module)
+--dry-run              # print parsed command/script + risk level, do not ssh
 --limit <host>         # ansible -l, run on one host first
---timeout <sec>        # wrap remote command in `timeout <sec> bash -c ...`
+--timeout <sec>        # command execution timeout in seconds
 --yes, -y              # skip interactive confirm (still blocked for dangerous)
 --allow-destructive    # permit dangerous commands (still needs confirm / --yes)
 ```
@@ -195,6 +198,7 @@ opsvault ansible exec --group db -c "df -h / && free -m"
 opsvault ansible exec --group web -c "systemctl is-active nginx || true"
 opsvault ansible exec --group db  -c "docker ps --format 'table {{.Names}}\t{{.Status}}'"
 opsvault ansible exec --group db  -c "tail -n 50 /data/opsvault/logs/opsvault.log"
+opsvault ansible exec --group db  -f ./scripts/read_only_healthcheck.sh
 ```
 
 **Patterns that REQUIRE explicit user confirmation + narrowed scope:**
@@ -202,6 +206,9 @@ opsvault ansible exec --group db  -c "tail -n 50 /data/opsvault/logs/opsvault.lo
 ```bash
 # restarting a service across a group
 opsvault ansible exec --group web -c "systemctl restart nginx"
+
+# executing a mutating local script across a group
+opsvault ansible exec --group web -f ./scripts/rotate_logs.sh --limit web01
 
 # clearing a specific, known tmp dir (note the guard)
 opsvault ansible exec --group app -c "test -d /data/opsvault/app/tmp && find /data/opsvault/app/tmp -mindepth 1 -maxdepth 1 -mtime +7 -delete"
